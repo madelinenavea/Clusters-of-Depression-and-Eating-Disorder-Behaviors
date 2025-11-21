@@ -1,0 +1,703 @@
+---
+title: "BDI LPA"
+author: "Madeline M. Navea"
+date: '2024-07-25'
+output: html_document
+---
+
+# Load Packages:
+```{r setup}
+library("tidyLPA")
+library("mclust")
+library("foreign")
+library("dplyr")
+library("haven") 
+library("ggplot2")
+library("expss")
+library("DescTools")
+library("Rmisc")
+library("lsr")
+library("effectsize")
+# library("multcomp")
+library("patchwork")
+library("magrittr")
+library("tidyverse")
+library("cowplot")
+library("wesanderson")
+library("gridExtra")
+library("fmsb")
+```
+
+# Load Data:
+```{r warning=FALSE}
+LPA_data <- read.csv("Raw data/bdi_lpa_07_18_24.csv") %>% 
+   dplyr::rename(
+    "B_1" = A1_BDI_1, # sadness
+    "B_2" = A1_BDI_2, # pessimism
+    "B_3" = A1_BDI_3, # past failure
+    "B_4" = A1_BDI_4, # loss of pleasure
+    "B_5" = A1_BDI_5, # guilty feelings
+    "B_6" = A1_BDI_6, # punishment feelings
+    "B_7" = A1_BDI_7, # self-dislike
+    "B_8" = A1_BDI_8, # self-criticism
+    "B_9" = A1_BDI_9, # suicidal thoughts/wishes
+    "B_10" = A1_BDI_10, # crying
+    "B_11" = A1_BDI_11, # agitation
+    "B_12" = A1_BDI_12, # loss of interest
+    "B_13" = A1_BDI_13, # indecisiveness
+    "B_14" = A1_BDI_14, # worthlessness
+    "B_15" = A1_BDI_15, # loss of energy
+    "B_16" = A1_BDI_16, # changes in sleep pattern
+    "B_17" = A1_BDI_17, # irritability
+    "B_18" = A1_BDI_18, # changes in appetite
+    "B_19" = A1_BDI_19, # concentration difficulty
+    "B_20" = A1_BDI_20, # tiredness or fatigue
+    "B_21" = A1_BDI_21) %>% # loss of interest in sex
+    mutate(LPA_data, compbx = B_1, B_2, B_3, B_4, B_5, B_6, B_7, B_8, B_9, B_10, B_11, B_12, B_13, B_14, B_15, B_16, B_17, B_18, B_19, B_20, B_21)
+LPA_data$ID <- 1:nrow(LPA_data)
+LPA_data %<>% filter(ID != 208 & ID !=213 & ID != 552)
+LPA_data %<>% filter(study != "ACQUIRE2" & study != "CONQUER")
+table(LPA_data$study)
+table(LPA_data$sex)
+
+mean_age <- mean(LPA_data$age, na.rm = TRUE)
+sd_age <- sd(LPA_data$age, na.rm = TRUE)
+mean_age
+sd_age
+
+```
+
+# Run LPA and Check model fit - all participants, 1-4 classes:
+```{r message=FALSE, warning=FALSE}
+set.seed(1)
+model_fits <-
+LPA_data[1:572, ] %>%
+  dplyr::select(
+    B_1, B_2, B_3, B_4, B_5, B_6, B_7, B_8, B_9, B_10, B_11, B_12, B_13, B_14, B_15, B_16, B_17, B_18, B_19, B_20, B_21) %>%
+  single_imputation() %>%
+  estimate_profiles(1:5, 
+                    variances = c("varying", "equal"),
+                    covariances = c("zero", "zero")) %>%
+  compare_solutions(statistics = c("AIC", "BIC", "SABIC", "Entropy", "LogLik"))
+print(model_fits)
+#An analytic hierarchy process, based on the fit indices AIC, AWE, BIC, CLC, and KIC (Akogul & Erisoglu, 2017), #suggests the best solution is Model 3 with 4 classes.
+#tested k+1 and still model 3 with 4 classes
+```
+
+# Get effect estimates for best fit solution:
+```{r}
+set.seed(1)
+LPAresults <- LPA_data[1:572, ] %>%
+  dplyr::select(B_1, B_2, B_3, B_4, B_5, B_6, B_7, B_8, B_9, B_10, B_11, B_12, B_13, B_14, B_15, B_16, B_17, B_18, B_19, B_20, B_21) %>%
+  single_imputation() %>%
+  estimate_profiles(4, 
+                    variances = "equal",
+                    covariances = "zero") 
+get_estimates(LPAresults)
+plot_profiles(LPAresults)
+```
+
+# Classifications and merging datasets:
+```{r}
+# pull out classifications & merge into main data-set
+LPAresults.df <- as.data.frame(get_data(LPAresults))
+ID <- LPA_data$ID
+LPAresults.df$ID <- ID
+LPAresults.df %<>% dplyr::select(ID, everything()) %>% 
+  dplyr::select(ID, Class, starts_with("CPROB"))
+
+LPA_anova <- merge(LPA_data, LPAresults.df, by = "ID")
+write.csv(LPA_anova,"Outputs/Classifications.csv", row.names = FALSE)
+table(LPAresults.df$Class)
+```
+
+# 1-Way ANOVAs:
+```{r}
+LPA_anova <- read.csv("Outputs/Classifications.csv")
+LPA_anova$posprob <- ifelse(LPA_anova$Class==1, LPA_anova$CPROB1, 
+                     ifelse(LPA_anova$Class==2, LPA_anova$CPROB2, 
+                     ifelse(LPA_anova$Class==3, LPA_anova$CPROB3,
+                     ifelse(LPA_anova$Class==4, LPA_anova$CPROB4,
+                     NA))))
+summary(LPA_anova)
+table(LPA_anova$Class)
+```
+
+# Posterior Probabilities:
+# Class Solutions:
+```{r}
+# Mean Posterior Probabilities:
+LPA1Class <- LPA_data[1:572, ] %>%
+  dplyr::select(B_1, B_2, B_3, B_4, B_5, B_6, B_7, B_8, B_9, B_10, B_11, B_12, B_13, B_14, B_15, B_16, B_17, B_18, B_19, B_20, B_21) %>%
+  single_imputation() %>%
+  estimate_profiles(1, 
+                    variances = "equal",
+                    covariances = "zero")
+LPA1Class.df <- as.data.frame(get_data(LPA1Class))
+LPA1Class.df$posprob <- ifelse(LPA1Class.df$Class==1, LPA1Class.df$CPROB1, ifelse(LPA1Class.df$Class==2, LPA1Class.df$CPROB2, NA))
+summary(LPA1Class.df)
+
+LPA2Class <- LPA_data[1:572, ] %>%
+  dplyr::select(B_1, B_2, B_3, B_4, B_5, B_6, B_7, B_8, B_9, B_10, B_11, B_12, B_13, B_14, B_15, B_16, B_17, B_18, B_19, B_20, B_21) %>%
+  single_imputation() %>%
+  estimate_profiles(2, 
+                    variances = "equal",
+                    covariances = "zero")
+LPA2Class.df <- as.data.frame(get_data(LPA2Class))
+LPA2Class.df$posprob <- ifelse(LPA2Class.df$Class==1, LPA2Class.df$CPROB1, ifelse(LPA2Class.df$Class==2, LPA2Class.df$CPROB2, NA))
+summary(LPA2Class.df)
+
+LPA3Class <- LPA_data[1:572, ] %>%
+  dplyr::select(B_1, B_2, B_3, B_4, B_5, B_6, B_7, B_8, B_9, B_10, B_11, B_12, B_13, B_14, B_15, B_16, B_17, B_18, B_19, B_20, B_21) %>%
+  single_imputation() %>%
+  estimate_profiles(3, 
+                    variances = "equal",
+                    covariances = "zero")
+LPA3Class.df <- as.data.frame(get_data(LPA3Class))
+LPA3Class.df$posprob <- ifelse(LPA3Class.df$Class==1, LPA3Class.df$CPROB1, ifelse(LPA3Class.df$Class==2, LPA3Class.df$CPROB2, ifelse(LPA3Class.df$Class==3, LPA3Class.df$CPROB3, NA)))
+summary(LPA3Class.df)
+
+LPA4Class <- LPA_data[1:572, ] %>%
+  dplyr::select(B_1, B_2, B_3, B_4, B_5, B_6, B_7, B_8, B_9, B_10, B_11, B_12, B_13, B_14, B_15, B_16, B_17, B_18, B_19, B_20, B_21) %>%
+  single_imputation() %>%
+  estimate_profiles(4, 
+                    variances = "equal",
+                    covariances = "zero")
+LPA4Class.df <- as.data.frame(get_data(LPA4Class))
+LPA4Class.df$posprob <- ifelse(LPA4Class.df$Class==1, LPA4Class.df$CPROB1, ifelse(LPA4Class.df$Class==2, LPA4Class.df$CPROB2, ifelse(LPA4Class.df$Class==3, LPA4Class.df$CPROB3, ifelse(LPA4Class.df$Class==4, LPA4Class.df$CPROB4, NA))))
+summary(LPA4Class.df)
+
+write.csv(LPA1Class.df, "Outputs/LPA 1 Class version.csv")
+write.csv(LPA2Class.df, "Outputs/LPA 2 Class version.csv")
+write.csv(LPA3Class.df, "Outputs/LPA 3 Class version.csv")
+write.csv(LPA4Class.df, "Outputs/LPA 4 Class version.csv")
+
+# Percent of data points with posterior probability > 0.8
+group_by(LPA1Class.df, Class) %>% dplyr::summarise(m = sum(posprob > 0.8)/length(posprob))
+group_by(LPA2Class.df, Class) %>% dplyr::summarise(m = sum(posprob > 0.8)/length(posprob))
+group_by(LPA3Class.df, Class) %>% dplyr::summarise(m = sum(posprob > 0.8)/length(posprob))
+group_by(LPA4Class.df, Class) %>% dplyr::summarise(m = sum(posprob > 0.8)/length(posprob))
+table(LPA4Class.df$Class)
+table(LPA3Class.df$Class)
+```
+
+# Profile Descriptives:
+```{r}
+table(LPA_anova$Dx_General_SD)
+LPA_anova$Class <- factor(LPA_anova$Class)
+
+summary.table1 <- LPA_anova %>% 
+  filter(Class == 1) %>% 
+  summarise(
+    BEDdx = sum(Dx_General_SD == "BED dx types"),
+    BNdx = sum(Dx_General_SD == "BN dx types"),
+    ANBPdx = sum(Dx_General_SD == "ANBP"),
+    OSFEDdx = sum(Dx_General_SD == "OSFED/other"),
+    mean_1 = mean(B_1, na.rm = TRUE),
+    mean_2 = mean(B_2, na.rm = TRUE),
+    mean_3 = mean(B_3, na.rm = TRUE),
+    mean_4 = mean(B_4, na.rm = TRUE),
+    mean_5 = mean(B_5, na.rm = TRUE),
+    mean_6 = mean(B_6, na.rm = TRUE),
+    mean_7 = mean(B_7, na.rm = TRUE),
+    mean_8 = mean(B_8, na.rm = TRUE),
+    mean_9 = mean(B_9, na.rm = TRUE),
+    mean_10 = mean(B_10, na.rm = TRUE),
+    mean_11 = mean(B_11, na.rm = TRUE),
+    mean_12 = mean(B_12, na.rm = TRUE),
+    mean_13 = mean(B_13, na.rm = TRUE),
+    mean_14 = mean(B_14, na.rm = TRUE),
+    mean_15 = mean(B_15, na.rm = TRUE),
+    mean_16 = mean(B_16, na.rm = TRUE),
+    mean_17 = mean(B_17, na.rm = TRUE),
+    mean_18 = mean(B_18, na.rm = TRUE),
+    mean_19 = mean(B_19, na.rm = TRUE),
+    mean_20 = mean(B_20, na.rm = TRUE),
+    mean_21 = mean(B_21, na.rm = TRUE))
+
+summary.table2 <- LPA_anova %>% 
+  filter(Class == 2) %>% 
+  summarise(
+    BEDdx = sum(Dx_General_SD == "BED dx types"),
+    BNdx = sum(Dx_General_SD == "BN dx types"),
+    ANBPdx = sum(Dx_General_SD == "ANBP"),
+    OSFEDdx = sum(Dx_General_SD == "OSFED/other"),
+    mean_1 = mean(B_1, na.rm = TRUE),
+    mean_2 = mean(B_2, na.rm = TRUE),
+    mean_3 = mean(B_3, na.rm = TRUE),
+    mean_4 = mean(B_4, na.rm = TRUE),
+    mean_5 = mean(B_5, na.rm = TRUE),
+    mean_6 = mean(B_6, na.rm = TRUE),
+    mean_7 = mean(B_7, na.rm = TRUE),
+    mean_8 = mean(B_8, na.rm = TRUE),
+    mean_9 = mean(B_9, na.rm = TRUE),
+    mean_10 = mean(B_10, na.rm = TRUE),
+    mean_11 = mean(B_11, na.rm = TRUE),
+    mean_12 = mean(B_12, na.rm = TRUE),
+    mean_13 = mean(B_13, na.rm = TRUE),
+    mean_14 = mean(B_14, na.rm = TRUE),
+    mean_15 = mean(B_15, na.rm = TRUE),
+    mean_16 = mean(B_16, na.rm = TRUE),
+    mean_17 = mean(B_17, na.rm = TRUE),
+    mean_18 = mean(B_18, na.rm = TRUE),
+    mean_19 = mean(B_19, na.rm = TRUE),
+    mean_20 = mean(B_20, na.rm = TRUE),
+    mean_21 = mean(B_21, na.rm = TRUE))
+
+summary.table3 <- LPA_anova %>% 
+  filter(Class == 3) %>% 
+  summarise(
+    BEDdx = sum(Dx_General_SD == "BED dx types"),
+    BNdx = sum(Dx_General_SD == "BN dx types"),
+    ANBPdx = sum(Dx_General_SD == "ANBP"),
+    OSFEDdx = sum(Dx_General_SD == "OSFED/other"),
+    mean_1 = mean(B_1, na.rm = TRUE),
+    mean_2 = mean(B_2, na.rm = TRUE),
+    mean_3 = mean(B_3, na.rm = TRUE),
+    mean_4 = mean(B_4, na.rm = TRUE),
+    mean_5 = mean(B_5, na.rm = TRUE),
+    mean_6 = mean(B_6, na.rm = TRUE),
+    mean_7 = mean(B_7, na.rm = TRUE),
+    mean_8 = mean(B_8, na.rm = TRUE),
+    mean_9 = mean(B_9, na.rm = TRUE),
+    mean_10 = mean(B_10, na.rm = TRUE),
+    mean_11 = mean(B_11, na.rm = TRUE),
+    mean_12 = mean(B_12, na.rm = TRUE),
+    mean_13 = mean(B_13, na.rm = TRUE),
+    mean_14 = mean(B_14, na.rm = TRUE),
+    mean_15 = mean(B_15, na.rm = TRUE),
+    mean_16 = mean(B_16, na.rm = TRUE),
+    mean_17 = mean(B_17, na.rm = TRUE),
+    mean_18 = mean(B_18, na.rm = TRUE),
+    mean_19 = mean(B_19, na.rm = TRUE),
+    mean_20 = mean(B_20, na.rm = TRUE),
+    mean_21 = mean(B_21, na.rm = TRUE))
+
+summary.table4 <- LPA_anova %>% 
+  filter(Class == 4) %>% 
+  summarise(
+    BEDdx = sum(Dx_General_SD == "BED dx types"),
+    BNdx = sum(Dx_General_SD == "BN dx types"),
+    ANBPdx = sum(Dx_General_SD == "ANBP"),
+    OSFEDdx = sum(Dx_General_SD == "OSFED/other"),  
+    mean_1 = mean(B_1, na.rm = TRUE),
+    mean_2 = mean(B_2, na.rm = TRUE),
+    mean_3 = mean(B_3, na.rm = TRUE),
+    mean_4 = mean(B_4, na.rm = TRUE),
+    mean_5 = mean(B_5, na.rm = TRUE),
+    mean_6 = mean(B_6, na.rm = TRUE),
+    mean_7 = mean(B_7, na.rm = TRUE),
+    mean_8 = mean(B_8, na.rm = TRUE),
+    mean_9 = mean(B_9, na.rm = TRUE),
+    mean_10 = mean(B_10, na.rm = TRUE),
+    mean_11 = mean(B_11, na.rm = TRUE),
+    mean_12 = mean(B_12, na.rm = TRUE),
+    mean_13 = mean(B_13, na.rm = TRUE),
+    mean_14 = mean(B_14, na.rm = TRUE),
+    mean_15 = mean(B_15, na.rm = TRUE),
+    mean_16 = mean(B_16, na.rm = TRUE),
+    mean_17 = mean(B_17, na.rm = TRUE),
+    mean_18 = mean(B_18, na.rm = TRUE),
+    mean_19 = mean(B_19, na.rm = TRUE),
+    mean_20 = mean(B_20, na.rm = TRUE),
+    mean_21 = mean(B_21, na.rm = TRUE))
+
+summary.table <- rbind(summary.table1, summary.table2, summary.table3, summary.table4)
+
+print(summary.table)
+```
+
+# ANOVAs:
+```{r}
+aov_global <- aov(A1_EDEGlobalscore ~ Class, data = LPA_anova)
+summary(aov_global)
+
+aov_restraint <- aov(A1_EDERestraintscore ~ Class, data = LPA_anova)
+summary(aov_restraint)
+effectsize(aov_restraint)
+
+aov_eating <- aov(A1_EDEEatingConcernscore ~ Class, data = LPA_anova)
+summary(aov_eating)
+
+aov_shape <- aov(A1_EDEShapeConcernscore ~ Class, data = LPA_anova)
+summary(aov_shape)
+
+aov_weight <- aov(A1_EDEWeightConcernscore ~ Class, data = LPA_anova)
+summary(aov_weight)
+
+aov_LOC <- aov(A1_EDE_LOCepisodes_M1 ~ Class, data = LPA_anova)
+summary(aov_LOC)
+
+aov_OBE <- aov(A1_EDEOBEMonth1_e ~ Class, data = LPA_anova)
+summary(aov_OBE)
+
+aov_drivenex <- aov(A1_EDEDrivenExM1_d ~ Class, data = LPA_anova)
+summary(aov_drivenex)
+
+aov_chewingandspitting <- aov(A1_EDEChewingandSpittingM1_d ~ Class, data = LPA_anova)
+summary(aov_chewingandspitting)
+
+aov_fast <- aov(A1_EDEComp8hrFastM1_d ~ Class, data = LPA_anova)
+summary(aov_fast)
+effectsize(aov_fast)
+
+aov_diuretic <- aov(A1_EDECompDiureticM1_e ~ Class, data = LPA_anova)
+summary(aov_diuretic)
+
+aov_laxative <- aov(A1_EDECompLaxativeM1_e ~ Class, data = LPA_anova)
+summary(aov_laxative)
+effectsize(aov_laxative)
+
+aov_vomiting <- aov(A1_EDEVomitingM1_e ~ Class, data = LPA_anova)
+summary(aov_vomiting)
+effectsize(aov_vomiting)
+#tukey_vomiting <- glht(aov_vomiting, linfct = mcp(Class = "Tukey"))
+#summary(tukey_vomiting)
+
+aov_other <- aov(A1_EDEOtherExtremeM1_d ~ Class, data = LPA_anova)
+summary(aov_other)
+effectsize(aov_other)
+
+aov_BDI_total <- aov(A1_BDI_Total ~ Class, data = LPA_anova)
+summary(aov_BDI_total)
+effectsize(aov_BDI_total)
+
+```
+
+# Data prep for plotting: (depressive profiles)
+```{r}
+plot_bdi <- LPA_anova %>%
+  mutate(B_total = rowSums(select(., starts_with("B_")))) %>%
+  pivot_longer(
+    cols = c(starts_with("B_"), B_total),
+    names_to = "BDI_items",
+    values_to = "BDI_score"
+  ) %>%
+  mutate(
+    BDI_items = case_when(
+      BDI_items == "B_1" ~ "Sadness",
+      BDI_items == "B_2" ~ "Pessimism",
+      BDI_items == "B_3" ~ "Past Failure",
+      BDI_items == "B_4" ~ "Loss of Pleasure",
+      BDI_items == "B_5" ~ "Guilty Feelings",
+      BDI_items == "B_6" ~ "Punishment Feelings",
+      BDI_items == "B_7" ~ "Self-dislike",
+      BDI_items == "B_8" ~ "Self-criticalness",
+      BDI_items == "B_9" ~ "Suicidal thoughts or wishes",
+      BDI_items == "B_10" ~ "Crying",
+      BDI_items == "B_11" ~ "Agitation",
+      BDI_items == "B_12" ~ "Loss of Interest",
+      BDI_items == "B_13" ~ "Indecisiveness",
+      BDI_items == "B_14" ~ "Worthlessness",
+      BDI_items == "B_15" ~ "Loss of Energy",
+      BDI_items == "B_16" ~ "Changes in Sleeping Pattern",
+      BDI_items == "B_17" ~ "Irritability",
+      BDI_items == "B_18" ~ "Changes in Appetite",
+      BDI_items == "B_19" ~ "Concentration Difficulty",
+      BDI_items == "B_20" ~ "Tiredness or Fatigue",
+      BDI_items == "B_21" ~ "Loss of Interest in Sex",
+      BDI_items == "B_total" ~ "BDI Total",
+      TRUE ~ BDI_items))
+plot_bdi %<>%
+  dplyr::group_by(Class, BDI_items) %>%
+  dplyr::summarise(mean_score = mean(BDI_score, na.rm = TRUE),
+            sd_score = sd(BDI_score, na.rm = TRUE),
+            n = n()) %>%
+  mutate(se_score = sd_score / sqrt(n)) %>% 
+  ungroup()
+plot_bdi$Class <- factor(plot_bdi$Class)
+
+
+df_filtered <- plot_bdi %>% 
+  filter(BDI_items != "BDI Total")
+
+# Highest mean_score per Class
+highest_means <- df_filtered %>%
+  group_by(Class) %>%
+  slice_max(mean_score, n = 1, with_ties = FALSE)
+
+# Lowest mean_score per Class
+lowest_means <- df_filtered %>%
+  group_by(Class) %>%
+  slice_min(mean_score, n = 1, with_ties = FALSE)
+```
+# Data prep for plotting: (profiles and EDbx)
+```{r}
+plot_long <- LPA_anova %>%
+  dplyr::select(Class, 
+                A1_EDEDrivenExM1_d, 
+                A1_EDERestraintscore, 
+                A1_EDEEatingConcernscore, 
+                A1_EDEShapeConcernscore, 
+                A1_EDEWeightConcernscore, 
+                A1_EDEGlobalscore, 
+                A1_EDEChewingandSpittingM1_d, 
+                A1_EDEComp8hrFastM1_d, 
+                A1_EDECompDiureticM1_e, 
+                A1_EDECompLaxativeM1_e, 
+                A1_EDEVomitingM1_e, 
+                A1_EDEOtherExtremeM1_d) %>%  
+  pivot_longer(cols = c(
+                A1_EDEDrivenExM1_d, 
+                A1_EDERestraintscore, 
+                A1_EDEEatingConcernscore, 
+                A1_EDEShapeConcernscore, 
+                A1_EDEWeightConcernscore, 
+                A1_EDEGlobalscore, 
+                A1_EDEChewingandSpittingM1_d, 
+                A1_EDEComp8hrFastM1_d, 
+                A1_EDECompDiureticM1_e, 
+                A1_EDECompLaxativeM1_e, 
+                A1_EDEVomitingM1_e, 
+                A1_EDEOtherExtremeM1_d), 
+               names_to = "ED_behaviors",
+               values_to = "EDbx_Score")
+plot_long %<>%
+  mutate(
+    ED_behaviors = case_when(
+      ED_behaviors == "A1_EDEDrivenExM1_d" ~ "Driven Exercise",
+      ED_behaviors == "A1_EDERestraintscore" ~ "Restraint Concern",
+      ED_behaviors == "A1_EDEEatingConcernscore" ~ "Eating Concern",
+      ED_behaviors == "A1_EDEShapeConcernscore" ~ "Shape Concern",
+      ED_behaviors == "A1_EDEWeightConcernscore" ~ "Weight Concern",
+      ED_behaviors == "A1_EDEGlobalscore" ~ "EDE Global Score",
+      ED_behaviors == "A1_EDEChewingandSpittingM1_d" ~ "Chewing and Spitting",
+      ED_behaviors == "A1_EDEComp8hrFastM1_d" ~ "8 Hour Fasting",
+      ED_behaviors == "A1_EDECompDiureticM1_e" ~ "Diuretic Misuse",
+      ED_behaviors == "A1_EDECompLaxativeM1_e" ~ "Laxative Misuse",
+      ED_behaviors == "A1_EDEVomitingM1_e" ~ "Vomiting",
+      ED_behaviors == "A1_EDEOtherExtremeM1_d" ~ "Other"))
+Plot_ED_behaviors <- plot_long %>%
+  dplyr::group_by(Class, ED_behaviors) %>%
+  dplyr::summarise(mean_score = mean(EDbx_Score, na.rm = TRUE),
+            sd_score = sd(EDbx_Score, na.rm = TRUE),
+            n = n()) %>%
+  mutate(se_score = sd_score / sqrt(n)) %>% 
+  ungroup()
+Plot_ED_behaviors$Class <- factor(Plot_ED_behaviors$Class)
+
+plot_long2 <- LPA_anova %>%
+  dplyr::select(Class, A1_EDEOBEMonth1_e, A1_EDE_LOCepisodes_M1) %>% 
+  pivot_longer(cols = c(A1_EDEOBEMonth1_e, A1_EDE_LOCepisodes_M1),
+                names_to = "Binge_E",
+                values_to = "Binge_episodes")
+plot_long2 %<>%
+  mutate(
+    Binge_E = case_when(     
+      Binge_E == "A1_EDEOBEMonth1_e" ~ "OBE Month 1",
+      Binge_E == "A1_EDE_LOCepisodes_M1" ~ "LOC Episodes"))
+Plot_Binge <- plot_long2 %>%
+  dplyr::group_by(Class, Binge_E) %>%
+  dplyr::summarise(mean_episodes = mean(Binge_episodes, na.rm = TRUE),
+            sd_episodes = sd(Binge_episodes, na.rm = TRUE),
+            n = n()) %>%
+  mutate(se_episodes = sd_episodes / sqrt(n)) %>% 
+  ungroup()
+Plot_Binge$Class <- factor(Plot_Binge$Class)
+```
+```{r}
+bdi_plot <- ggplot(plot_bdi, aes(x = BDI_items, y = mean_score, group = Class, 
+                                              color = Class, fill = Class)) + # shape = Class, 
+  #geom_point(size = 3, stroke = 1) +
+  geom_line(size = 1.25) +
+  # geom_errorbar(aes(ymin = mean_score - se_score, ymax = mean_score + se_score), width = 2) +
+  scale_color_manual(values = c("1" = "#6D9F71", "2" = "#FE5F55", "3" = "#1D6E9A", "4" = "#221D23")) +
+  scale_fill_manual(values = c("1" = "#6D9F71", "2" = "#FE5F55", "3" = "#1D6E9A", "4" = "#221D23")) +
+  scale_shape_manual(values = c("1" = 21, "2" = 22, "3" = 23, "4" = 24)) +
+  labs(title = "BDI States by Profile",
+       x = " ",
+       y = "Score",
+       color = "Class",
+       shape = "Class",
+       fill = "Class",
+       linetype = "Class") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right")
+bdi_plot
+ggsave("Outputs/bdi_plot.jpeg", plot = bdi_plot, dpi = 3000)
+```
+
+# Plotting 
+```{r}
+ggplot(Plot_ED_behaviors, aes(x = ED_behaviors, y = mean_score, group = Class, color = Class)) +
+  geom_point(size = 2.25) + 
+  geom_line(size = 1.25) +
+#  geom_errorbar(aes(ymin = mean_score - se_score, ymax = mean_score + se_score), width = 0.2) +
+  scale_color_manual(values = c("1" = "#6D9F71", "2" = "#FE5F55", "3" = "#1D6E9A", "4" = "#221D23")) +
+  labs(title = "Eating Disorder Behaviors by BDI Class",
+       x = " ",
+       y = "Score",
+       color = "Class",
+       linetype = "Class") +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+  #    facet_wrap(~ Class, scales = "free_y")
+ggsave("Outputs/edbx_plot.jpeg", dpi = 3000)
+
+ggplot(Plot_Binge, aes(x = Binge_E, y = mean_episodes, group = Class, color = Class)) +
+  geom_point(size = 2.25) + 
+  geom_line(size = 1.25) +
+  geom_errorbar(aes(ymin = mean_episodes - se_episodes, ymax = mean_episodes + se_episodes), 
+                width = 0.05, linetype = "solid") +
+  scale_color_manual(values = c("1" = "#6D9F71", "2" = "#FE5F55", "3" = "#1D6E9A", "4" = "#221D23")) +
+  labs(title = "Binge Episodes by BDI Class",
+       x = "Binge Episodes",
+       y = "Episodes in the past month",
+       color = "Class",
+       linetype = "Class") +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 360))
+ggsave("Outputs/binge_plot.jpeg", plot = bdi_plot, dpi = 3000)
+```
+
+# Boxplots:
+```{r}
+#===============
+# Best Colors: Moonrise3, Royal1, Cavalcanti1, GrandBudapest1, GrandBudapest2, FrenchDispatch, AsteroidCity2
+#===============
+class_colors <- c(wes_palette(n=3, name="Moonrise3"))
+
+plot1 <- ggplot(LPA_anova, aes(x = Class, y = A1_EDEGlobalscore, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "EDE Global", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot2 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDERestraintscore, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Restraint", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot3 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDEEatingConcernscore, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Eating Concern", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot4 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDEShapeConcernscore, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Shape Concern", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot5 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDEWeightConcernscore, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Weight Concern", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot6 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDE_LOCepisodes_M1, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "LOC Episodes", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot7 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDEOBEMonth1_e, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "OBEs", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot8 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDEDrivenExM1_d, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Driven Exercise", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot9 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDEChewingandSpittingM1_d, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Chewing and Spitting", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot10 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDEComp8hrFastM1_d, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Compensatory Fasting (8 hours)", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot11 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDECompDiureticM1_e, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Diuretic Misuse", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot12 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDECompLaxativeM1_e, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Laxative Misuse", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot13 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDEVomitingM1_e, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Self-induced Vomiting", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot14 <- ggplot(LPA_anova,aes(x = Class, y = A1_EDEOtherExtremeM1_d, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "Other Extreme", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+plot15 <- ggplot(LPA_anova,aes(x = Class, y = A1_BDI_Total, fill = factor(Class)))+
+  geom_boxplot()+
+  scale_fill_manual(values = class_colors)+
+  labs(title = "BDI Total", y = " ")+
+  theme_classic()+
+  theme(legend.position = "none", plot.title = element_text(hjust = .5))
+
+combined_plot1 <- (plot1 + plot2 + plot3 + plot4 + plot5)
+combined_plot2 <- (plot6 + plot7 + plot8 + plot9 + plot10)
+combined_plot3 <- (plot11 + plot12 + plot13 + plot14 + plot15)  
+combined_plot1
+combined_plot2
+combined_plot3
+
+ggsave("Outputs/figure1.pdf", plot = plot_grid(plot1, plot2, plot3, plot4, plot5, plot6, plot7, plot8, plot9, plot10, plot11, plot12, plot13, plot14, plot15, ncol = 5, align = "h", rel_widths = c(1.2, 1.2, 1.2, 1.2, 1.2)), width = 30, height = 5)
+```
+
+# Tables:
+```{r}
+#Model Fits
+table_fits <- model_fits$fits %>% 
+  dplyr::select(-n_min, -n_max, -BLRT_val, -BLRT_p)
+
+write.csv(table_fits, "Outputs/model_fits.csv", row.names = FALSE)
+
+# Posterior probabilities
+posterior1 <- dplyr::group_by(LPA1Class.df, Class) %>% 
+  dplyr::summarise(mposprob = mean(posprob),
+            probover80 = sum(posprob>.8)/length(posprob), 
+            membership1 = sum(Class == 1)/length(Class))
+posterior2 <- dplyr::group_by(LPA2Class.df, Class) %>% 
+  dplyr::summarise(mposprob = mean(posprob),
+            probover80 = sum(posprob>.8)/length(posprob), 
+            membership2 = sum(Class == 2)/length(Class))
+posterior3 <- dplyr::group_by(LPA3Class.df, Class) %>% 
+  dplyr::summarise(mposprob = mean(posprob),
+            probover80 = sum(posprob>.8)/length(posprob), 
+            membership3 = sum(Class == 3)/length(Class))
+```
